@@ -1,0 +1,99 @@
+from ib_insync import *
+import csv
+from datetime import datetime
+import os
+import random
+import schedule
+import time
+
+# Connect to IB
+ib = IB()
+ib.connect('127.0.0.1', 7496, clientId=1)  # Ensure TWS is running and API access is enabled
+
+def get_stock_details(symbol):
+    contract = Stock(symbol, 'SMART', 'USD')
+    ib.qualifyContracts(contract)
+    print(f"Qualified contract: {contract}")
+
+    # Request delayed market data explicitly
+    ib.reqMarketDataType(4)  # Use 4 for delayed data (MarketDataType.DELAYED)
+    ticker = ib.reqMktData(contract)
+
+    # Wait for the data to arrive
+    ib.sleep(1)
+
+    retries = 5
+    while retries > 0:
+        if ticker.marketPrice() is not None and ticker.marketPrice() != 'nan':
+            break
+        ib.sleep(1)
+        retries -= 1
+
+    if ticker and ticker.marketPrice() is not None and ticker.marketPrice() != 'nan':
+        price = ticker.marketPrice()
+        volume = ticker.volume if hasattr(ticker, 'volume') and ticker.volume is not None else 'N/A'
+        high = ticker.high if hasattr(ticker, 'high') and ticker.high is not None else 'N/A'
+        low = ticker.low if hasattr(ticker, 'low') and ticker.low is not None else 'N/A'
+        print(f"Delayed market data for {symbol} received: Price={price}, Volume={volume}, High={high}, Low={low}")
+    else:
+        print(f"No market data received for {symbol}.")
+        price, volume, high, low = 'N/A', 'N/A', 'N/A', 'N/A'
+
+    return {'symbol': symbol, 'price': price, 'volume': volume, 'high': high, 'low': low}
+
+def run_task(symbols):
+    with open('stock_data.csv', mode='a', newline='') as file:  # Open the file in append mode
+        writer = csv.writer(file)
+        # Write header if the file is empty
+        if os.stat('stock_data.csv').st_size == 0:
+            writer.writerow(['date', 'time', 'symbol', 'price', 'volume', 'high', 'low'])
+
+        # Perform data extraction for each symbol
+        for symbol in symbols:
+            details = get_stock_details(symbol)
+
+            # Retry data extraction until actual values are obtained
+            attempts = 5
+            while 'N/A' in details.values() and attempts > 0:
+                print(f"Rerunning data extraction for {symbol}...")
+                details = get_stock_details(symbol)
+                attempts -= 1
+
+            # Write data to CSV only if all values are not 'N/A'
+            if 'N/A' not in details.values():
+                date_str = datetime.now().strftime('%Y-%m-%d')
+                time_str = datetime.now().strftime('%H:%M:%S')
+                data = [date_str, time_str, details['symbol'], details['price'], details['volume'], details['high'], details['low']]
+                writer.writerow(data)
+            else:
+                print(f"Skipping writing to CSV for {symbol} due to missing data.")
+
+def daily_update():
+    # List of symbols to fetch data for
+    symbols = ["GOOGL", "AMZN", "TSLA", "AAPL", "MSFT"]
+
+    # Generate a random time between 5:00 PM and 6:00 PM
+    hour = 17
+    minute = random.randint(0, 59)
+    second = random.randint(0, 59)
+
+    # Format the time as HH:MM:SS
+    random_time = f"{hour:02d}:{minute:02d}:{second:02d}"
+
+    # Schedule the task to run at the generated random time
+    # schedule.every().day.at(random_time).do(run_task, symbols=symbols)
+
+    # Run the task immediately for testing
+    run_task(symbols)
+
+if __name__ == "__main__":
+    # Schedule the daily update task
+    # daily_update()
+
+    # Run the task immediately for testing
+    run_task(["GOOGL", "AMZN", "TSLA", "AAPL", "MSFT"])
+
+    print("Task completed.")
+
+    # Disconnect from IB
+    ib.disconnect()
